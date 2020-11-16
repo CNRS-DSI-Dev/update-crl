@@ -34,12 +34,13 @@ SMTP notifications :
 - smtp_alert : enable or disable notifications, default true
 - smtp_hostname : subject contain node hostname, default {{ inventory_hostname_short }}
 - smtp_sender : mail sender, default {{ inventory_hostname_short }}@domain.fr
-- smtp_dest : mail {{ httpd_admin }}
+- smtp_dest : mail recipient, default {{ httpd_admin }}
 
 Ansible
 -------
 
 In your ansible role, use it has a jinja template. Simply add a yaml array :
+```
 x509auth_cacrl :
   - name: 'exampleCA'
     url: 'http://example.domain.fr/exampleCA.crl'
@@ -48,6 +49,7 @@ x509auth_cacrl :
   - name: 'titiCA' 
     url: 'http://ca.titi.fr/pem.crl'
     pem: 'true'
+```
 
 Others jinja variables can be configured :
 - proxy_address and proxy_port if your server need to use a proxy with wget
