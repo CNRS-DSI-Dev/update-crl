@@ -22,10 +22,12 @@ Basic variables :
 
 CRL providers :
 Foreach provider, add a line :
+```
 	declare -a arr=(
         "ExampleCA http://example.domain.fr/exampleCA.crl false"
         "titiCA http://ca.titi.fr/pem.crl true"
         )
+```
 - local_crl_delay : if a CRL file not refresh since x days, it is deleted, default 6 days
 
 SMTP notifications :
