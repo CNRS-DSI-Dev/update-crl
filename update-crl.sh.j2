@@ -1,0 +1,103 @@
+#!/bin/bash
+
+#
+# PARAMS
+#
+	crl_dir="/etc/pki/tls/ca-crls/"
+	crl_temp="temp.crl"
+	proxy_url="http://{{ proxy_address }}:{{ proxy_port }}"
+
+	# List of CRL providers - Syntax : <crl_local_file_name> <crl_provider_url> [<crl_provider_format>]
+	declare -a arr=(
+{% for cacrl in x509auth_cacrl %}
+	"{{ cacrl.name }} {{ cacrl.url }} {{ cacrl.pem|default("false", true) }}"
+{% endfor %}
+	)
+	# days before purge expired CRL files
+	local_crl_delay=6
+
+	#SMTP notifications
+	smtp_alert=true
+	smtp_hostname="{{ inventory_hostname_short }}"
+	smtp_sender="{{ inventory_hostname_short }}@dsi.cnrs.fr"
+	smtp_dest="{{ httpd_admin }}"
+
+#
+# FUNCS
+#
+	# send_mail <subject> <message>
+	function send_mail {
+		if [[ $smtp_alert == true ]]
+		then
+			echo "$2" | mail -s "$smtp_hostname - $1" -r $smtp_sender $smtp_dest
+		else
+			echo "$1 -> $2"
+		fi
+	}
+
+#
+# UPDATE CRLs
+#
+	cd $crl_dir
+	# Update CRL for each provider
+	for crl_provider in "${arr[@]}"
+	do
+	        crl_name=`echo $crl_provider | cut -d " " -f 1`
+	     	crl_url=`echo $crl_provider | cut -d " " -f 2`
+	        crl_pem=`echo $crl_provider | cut -d " " -f 3`
+	
+	        # get list and save in temporary file, return http code in std output
+	        http_code=`/bin/curl -x $proxy_url -w '%{http_code}' -Ss $crl_url -o $crl_temp`
+	
+	        # if curl fail
+		if [[ $? -ge "1" ]]
+		then
+			/bin/rm $crl_temp
+			send_mail "Failed to update CRL for $crl_name" "curl failed when get $crl_url"
+		# if curl dont received http code 200 OK
+		elif [[ $http_code != "200" ]]
+		then
+			/bin/rm $crl_temp
+			send_mail "Failed to update CRL for $crl_name" "curl received code $http_code when get $crl_url"
+		else
+	                # if CRL not already in PEM format
+	                if [[ $crl_pem == "false" ]]
+	                then
+	                        /bin/openssl crl -inform DER -in $crl_temp -out $crl_temp
+				if [[ $?  == "0" ]]
+				then
+					#if convert to PEM is OK, move temp file
+					mv $crl_temp $crl_name.crl
+				else
+					/bin/rm $crl_temp
+					send_mail "Failed PEM convert for $crl_name" "openssl failed to convert in PEM format for $crl_name"
+				fi
+	                else
+				#if already in PEM format, just check it then move temp file
+				/bin/openssl crl -inform PEM -in $crl_temp -noout &> /dev/null
+				if [[ $?  -ge "1" ]]
+				then
+					/bin/rm $crl_temp
+					send_mail "Failed check PEM CRL for $crl_name" "openssl failed to check PEM format $crl_name.crl"
+				else
+					mv $crl_temp $crl_name.crl
+				fi
+			fi
+
+	                # create sym link name with hash
+			crl_hash=`/bin/openssl crl -hash -noout -in $crl_name.crl`
+			if [[ $?  -ge "1" ]]
+			then
+				send_mail "Failed create symlink for $crl_name" "openssl failed to hash CRL $crl_name.crl"
+			else
+				/bin/ln -f -s $crl_name.crl $crl_hash.r0
+			fi
+	        fi
+	done
+
+#
+# PURGE LOCAL CRLs
+#
+	# search file and link with an update age older than N days, delete them and send a notification
+	/bin/find . \( -type l -o -type f \) -regex ".*[\.r0|\.crl]" -mtime +$local_crl_delay -delete -exec send_mail "CRITICAL purge expired local CRL" "local file {} was purged, last refresh older than $local_crl_delay days" \;
+
